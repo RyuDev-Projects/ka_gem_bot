@@ -5,7 +5,7 @@
 - Telegram Bot Token dari [@BotFather](https://t.me/botfather)
 - Google Gemini API Key dari [Google AI Studio](https://aistudio.google.com/)
 
-## 🛠️ Instalasi
+## �🛠️ Instalasi
 
 1. **Clone repository ini**
    ```bash

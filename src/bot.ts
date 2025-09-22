@@ -13,7 +13,85 @@ export class TelegramBotHandler {
     this.setupHandlers();
   }
 
-  // Helper function to split long messages
+  // Helper function to properly escape text for MarkdownV2
+  private escapeMarkdownV2(text: string): string {
+    // Strategy: Skip aggressive escaping, let MarkdownV2 handle most formatting
+    // Only escape what's absolutely necessary
+
+    // For MarkdownV2, we need to be very careful
+    // Let's try a minimal approach first
+
+    // Don't escape inside code blocks
+    const parts: string[] = [];
+    let currentIndex = 0;
+
+    // Find all code blocks and inline code
+    const codeBlockRegex = /```[\s\S]*?```/g;
+    const inlineCodeRegex = /`[^`\n]+`/g;
+
+    let match;
+    const codeRanges: Array<{start: number, end: number}> = [];
+
+    // Find code block ranges
+    while ((match = codeBlockRegex.exec(text)) !== null) {
+      codeRanges.push({start: match.index, end: match.index + match[0].length});
+    }
+
+    // Find inline code ranges
+    codeBlockRegex.lastIndex = 0; // Reset regex
+    while ((match = inlineCodeRegex.exec(text)) !== null) {
+      // Only add if not inside a code block
+      const inCodeBlock = codeRanges.some(range =>
+        match!.index >= range.start && match!.index < range.end
+      );
+      if (!inCodeBlock) {
+        codeRanges.push({start: match.index, end: match.index + match[0].length});
+      }
+    }
+
+    // Sort ranges by start position
+    codeRanges.sort((a, b) => a.start - b.start);
+
+    // Process text, escaping only outside code ranges
+    currentIndex = 0;
+    for (const range of codeRanges) {
+      // Escape text before code range
+      if (currentIndex < range.start) {
+        const beforeCode = text.substring(currentIndex, range.start);
+        const escaped = beforeCode.replace(/([_*\[\]()~>#+=|{}.!-])/g, '\\$1');
+        parts.push(escaped);
+      }
+
+      // Add code range as-is (but escape ` and \ inside code content)
+      const codeText = text.substring(range.start, range.end);
+      if (codeText.startsWith('```')) {
+        // Code block - escape ` and \ in content
+        const escaped = codeText.replace(/(```[\w]*\n?)([\s\S]*?)(```)/g, (match, open, content, close) => {
+          const escapedContent = content.replace(/([`\\])/g, '\\$1');
+          return open + escapedContent + close;
+        });
+        parts.push(escaped);
+      } else {
+        // Inline code - escape ` and \ in content
+        const escaped = codeText.replace(/(`)(.*?)(`)/g, (match, open, content, close) => {
+          const escapedContent = content.replace(/([`\\])/g, '\\$1');
+          return open + escapedContent + close;
+        });
+        parts.push(escaped);
+      }
+
+      currentIndex = range.end;
+    }
+
+    // Escape remaining text after last code range
+    if (currentIndex < text.length) {
+      const remaining = text.substring(currentIndex);
+      const escaped = remaining.replace(/([_*\[\]()~>#+=|{}.!-])/g, '\\$1');
+      parts.push(escaped);
+    }
+
+    return parts.join('');
+  }  // Helper function to split long messages
   private splitMessage(text: string): string[] {
     if (text.length <= this.MAX_MESSAGE_LENGTH) {
       return [text];
@@ -79,8 +157,9 @@ export class TelegramBotHandler {
     return chunks.length > 0 ? chunks : [text.substring(0, this.MAX_MESSAGE_LENGTH)];
   }
 
-  // Helper function to send long messages
+  // Helper function to send long messages with markdown support
   private async sendLongMessage(chatId: number, text: string, options?: any): Promise<void> {
+    // Don't use aggressive escaping - just let fallbacks handle it
     const chunks = this.splitMessage(text);
 
     console.log(`📄 Message split into ${chunks.length} parts`);
@@ -93,10 +172,26 @@ export class TelegramBotHandler {
       const finalChunk = chunks.length > 1 ?
         `${chunk}\n\n📄 (${i + 1}/${chunks.length})` : chunk;
 
-      // Only apply original options to the last message
-      const messageOptions = isLast ? options : {};
+      // Use legacy Markdown which is more forgiving
+      const messageOptions = {
+        parse_mode: 'Markdown' as const,
+        disable_web_page_preview: true,
+        ...(isLast ? options : {})
+      };
 
-      await this.bot.sendMessage(chatId, finalChunk, messageOptions);
+      try {
+        await this.bot.sendMessage(chatId, finalChunk, messageOptions);
+        console.log(`✅ Sent message part ${i + 1}/${chunks.length} with Markdown`);
+      } catch (error) {
+        console.log('⚠️ Markdown parsing failed, sending as plain text...');
+        // Fallback to plain text
+        const fallbackOptions = {
+          disable_web_page_preview: true,
+          ...(isLast ? options : {})
+        };
+        await this.bot.sendMessage(chatId, finalChunk, fallbackOptions);
+        console.log(`✅ Sent message part ${i + 1}/${chunks.length} as plain text`);
+      }
 
       // Small delay between messages to avoid rate limiting
       if (!isLast) {
