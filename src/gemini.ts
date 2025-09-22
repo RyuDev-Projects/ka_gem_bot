@@ -9,7 +9,7 @@ export class GeminiService {
   constructor() {
     console.log('🔧 Initializing Gemini service...');
     this.genAI = new GoogleGenerativeAI(config.gemini.apiKey);
-    this.model = this.genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    this.model = this.genAI.getGenerativeModel({ model: 'gemini-2.5-pro' });
     this.systemPrompt = config.gemini.systemPrompt;
     console.log('✅ Gemini service initialized successfully');
     console.log(`🎭 System prompt loaded (${this.systemPrompt.length} characters)`);
