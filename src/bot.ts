@@ -91,7 +91,7 @@ export class TelegramBotHandler {
     }
 
     return parts.join('');
-  }  // Helper function to split long messages
+  }  // Helper function to split long messages while preserving markdown
   private splitMessage(text: string): string[] {
     if (text.length <= this.MAX_MESSAGE_LENGTH) {
       return [text];
@@ -100,20 +100,52 @@ export class TelegramBotHandler {
     const chunks: string[] = [];
     let currentChunk = '';
 
-    // Split by paragraphs first
+    // Find all markdown blocks that shouldn't be split
+    const markdownBlocks: Array<{start: number, end: number, type: string}> = [];
+
+    // Find code blocks (```...```)
+    const codeBlockRegex = /```[\s\S]*?```/g;
+    let match;
+    while ((match = codeBlockRegex.exec(text)) !== null) {
+      markdownBlocks.push({
+        start: match.index,
+        end: match.index + match[0].length,
+        type: 'codeblock'
+      });
+    }
+
+    // Sort blocks by start position
+    markdownBlocks.sort((a, b) => a.start - b.start);
+
+    // Split by paragraphs first, but respect markdown blocks
     const paragraphs = text.split('\n\n');
+    let textPosition = 0;
 
     for (const paragraph of paragraphs) {
+      const paragraphStart = textPosition;
+      const paragraphEnd = textPosition + paragraph.length;
+
+      // Check if this paragraph contains or is inside a markdown block
+      const containsMarkdownBlock = markdownBlocks.some(block =>
+        (block.start >= paragraphStart && block.start < paragraphEnd) ||
+        (block.end > paragraphStart && block.end <= paragraphEnd) ||
+        (block.start <= paragraphStart && block.end >= paragraphEnd)
+      );
+
       // If adding this paragraph would exceed limit
       if ((currentChunk + '\n\n' + paragraph).length > this.MAX_MESSAGE_LENGTH) {
-        // If current chunk is not empty, save it
+        // Save current chunk if not empty
         if (currentChunk.trim()) {
           chunks.push(currentChunk.trim());
           currentChunk = '';
         }
 
-        // If paragraph itself is too long, split by sentences
-        if (paragraph.length > this.MAX_MESSAGE_LENGTH) {
+        // If paragraph contains markdown block and is too long, don't split it
+        if (containsMarkdownBlock && paragraph.length > this.MAX_MESSAGE_LENGTH) {
+          // Force add the paragraph as its own chunk, even if it's too long
+          chunks.push(paragraph);
+        } else if (paragraph.length > this.MAX_MESSAGE_LENGTH) {
+          // Split by sentences only if no markdown blocks
           const sentences = paragraph.split('. ');
           for (const sentence of sentences) {
             if ((currentChunk + '. ' + sentence).length > this.MAX_MESSAGE_LENGTH) {
@@ -121,7 +153,8 @@ export class TelegramBotHandler {
                 chunks.push(currentChunk.trim());
                 currentChunk = '';
               }
-              // If sentence is still too long, force split
+
+              // If sentence is still too long, force split by words
               if (sentence.length > this.MAX_MESSAGE_LENGTH) {
                 const words = sentence.split(' ');
                 for (const word of words) {
@@ -147,6 +180,8 @@ export class TelegramBotHandler {
       } else {
         currentChunk += (currentChunk ? '\n\n' : '') + paragraph;
       }
+
+      textPosition = paragraphEnd + 2; // +2 for \n\n
     }
 
     // Add remaining chunk
@@ -159,7 +194,7 @@ export class TelegramBotHandler {
 
   // Helper function to send long messages with markdown support
   private async sendLongMessage(chatId: number, text: string, options?: any): Promise<void> {
-    // Don't use aggressive escaping - just let fallbacks handle it
+    // Split message while preserving markdown
     const chunks = this.splitMessage(text);
 
     console.log(`📄 Message split into ${chunks.length} parts`);
@@ -169,8 +204,10 @@ export class TelegramBotHandler {
       const isLast = i === chunks.length - 1;
 
       // Add part indicator for multi-part messages
-      const finalChunk = chunks.length > 1 ?
-        `${chunk}\n\n📄 (${i + 1}/${chunks.length})` : chunk;
+      let finalChunk = chunk;
+      if (chunks.length > 1) {
+        finalChunk = `${chunk}\n\n📄 *(${i + 1}/${chunks.length})*`;
+      }
 
       // Use legacy Markdown which is more forgiving
       const messageOptions = {
@@ -183,7 +220,8 @@ export class TelegramBotHandler {
         await this.bot.sendMessage(chatId, finalChunk, messageOptions);
         console.log(`✅ Sent message part ${i + 1}/${chunks.length} with Markdown`);
       } catch (error) {
-        console.log('⚠️ Markdown parsing failed, sending as plain text...');
+        console.log(`⚠️ Markdown parsing failed for part ${i + 1}, trying plain text...`);
+        console.log(`Error: ${error}`);
         // Fallback to plain text
         const fallbackOptions = {
           disable_web_page_preview: true,
