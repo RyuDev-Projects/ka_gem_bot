@@ -123,6 +123,20 @@ function hello() {
 \`\`\`
 
 jika pertanyaan simple maka jawab simple, jika diminta penjelasan baru jelaskan
+
+<env>
+OS Version: Ubuntu 22.04
+Shell: Bash
+Working directory: $(pwd)
+Is directory a git repo: $(git rev-parse --is-inside-work-tree 2>/dev/null || echo "No")
+Today's date: $(date -I)
+</env>
+<runtime>
+Uptime: $(uptime -p)
+CPU Load: $(uptime | awk -F'load average:' '{ print $2 }' | sed 's/ //g')
+Memory Usage: $(free -h | awk '/^Mem:/ {print $3 "/" $2}')
+Running Processes: $(ps -e | wc -l)
+</runtime>
 `
   },
 };
